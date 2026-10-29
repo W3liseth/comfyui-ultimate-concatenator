@@ -341,33 +341,8 @@ async function readTextSets() {
     return await response.json();
 }
 
-async function saveTextSet(node) {
-    const dialog = app.extensionManager.dialog;
-    const name = (
-        await dialog.prompt({
-            title: "Save Text Set",
-            message: "Name of the text set:",
-            defaultValue: node._ultimateSetName ?? "",
-        })
-    )?.trim();
-    if (!name) {
-        return;
-    }
-
-    const sets = await readTextSets();
-    if (
-        Object.hasOwn(sets, name) &&
-        !(await dialog.confirm({
-            title: "Overwrite Text Set",
-            message: `A text set named "${name}" already exists. Replace it?`,
-            type: "overwrite",
-        }))
-    ) {
-        return;
-    }
-
-    sets[name] = currentItems(node);
-    await api.storeUserData(TEXT_SETS_FILE, sets);
+async function saveTextSet(node, sets, name) {
+    await api.storeUserData(TEXT_SETS_FILE, { ...sets, [name]: currentItems(node) });
     node._ultimateSetName = name;
     app.extensionManager.toast.add({
         severity: "success",
@@ -392,12 +367,12 @@ function createDialogButton(text) {
     return button;
 }
 
-function openTextSetBrowser(node, sets) {
+function openTextSetBrowser(node, sets, saving) {
     const overlay = document.createElement("div");
     Object.assign(overlay.style, {
         position: "fixed",
         inset: "0",
-        zIndex: "1000",
+        zIndex: "9999",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -421,7 +396,7 @@ function openTextSetBrowser(node, sets) {
     });
 
     const title = document.createElement("div");
-    title.textContent = "Text Sets";
+    title.textContent = saving ? "Save Text Set" : "Load Text Set";
     Object.assign(title.style, {
         padding: "12px 16px",
         fontSize: "16px",
@@ -461,10 +436,24 @@ function openTextSetBrowser(node, sets) {
         borderTop: "1px solid var(--border-color, #555)",
     });
     const deleteButton = createDialogButton("Delete");
-    deleteButton.style.marginRight = "auto";
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.value = node._ultimateSetName ?? "";
+    nameInput.placeholder = "Text set name";
+    Object.assign(nameInput.style, {
+        flex: "1",
+        minWidth: "0",
+        padding: "6px 8px",
+        border: "1px solid var(--border-color, #555)",
+        borderRadius: "5px",
+        color: "var(--input-text, #ddd)",
+        background: "var(--comfy-input-bg, #222)",
+    });
+    const spacer = document.createElement("div");
+    spacer.style.flex = "1";
     const cancelButton = createDialogButton("Cancel");
-    const loadButton = createDialogButton("Load");
-    footer.append(deleteButton, cancelButton, loadButton);
+    const actionButton = createDialogButton(saving ? "Save" : "Load");
+    footer.append(deleteButton, saving ? nameInput : spacer, cancelButton, actionButton);
 
     panel.append(title, body, footer);
     overlay.append(panel);
@@ -484,10 +473,20 @@ function openTextSetBrowser(node, sets) {
         close();
     };
 
+    const save = () => {
+        const name = nameInput.value.trim();
+        if (!name) {
+            return;
+        }
+        saveTextSet(node, sets, name).then(close).catch(showError);
+    };
+
     const renderPreview = () => {
         preview.replaceChildren();
         if (selected === null) {
-            preview.textContent = "No saved text sets yet.";
+            preview.textContent = saving
+                ? "Type a name to create a new text set, or select an existing set to replace it."
+                : "No saved text sets yet.";
             return;
         }
         for (const item of parseItems(JSON.stringify(sets[selected]))) {
@@ -519,15 +518,26 @@ function openTextSetBrowser(node, sets) {
         }
     };
 
+    const updateActionButton = () => {
+        if (saving) {
+            const name = nameInput.value.trim();
+            actionButton.disabled = !name;
+            actionButton.textContent = Object.hasOwn(sets, name) ? "Replace" : "Save";
+        } else {
+            actionButton.disabled = selected === null;
+        }
+    };
+
     const select = (name) => {
         selected = name;
         deleteArmed = false;
         deleteButton.textContent = "Delete";
+        deleteButton.disabled = selected === null;
         for (const [entryName, entry] of entries) {
             entry.style.background =
                 entryName === selected ? "var(--comfy-input-bg, #222)" : "transparent";
         }
-        loadButton.disabled = deleteButton.disabled = selected === null;
+        updateActionButton();
         renderPreview();
     };
 
@@ -552,12 +562,22 @@ function openTextSetBrowser(node, sets) {
                 color: "var(--input-text, #ddd)",
                 cursor: "pointer",
             });
-            entry.addEventListener("click", () => select(name));
-            entry.addEventListener("dblclick", load);
+            entry.addEventListener("click", () => {
+                nameInput.value = name;
+                select(name);
+            });
+            if (!saving) {
+                entry.addEventListener("dblclick", load);
+            }
             entries.set(name, entry);
             list.append(entry);
         }
-        select(names[0] ?? null);
+        if (saving) {
+            const name = nameInput.value.trim();
+            select(Object.hasOwn(sets, name) ? name : null);
+        } else {
+            select(names[0] ?? null);
+        }
     };
 
     deleteButton.addEventListener("click", () => {
@@ -575,8 +595,12 @@ function openTextSetBrowser(node, sets) {
             })
             .catch(showError);
     });
+    nameInput.addEventListener("input", () => {
+        const name = nameInput.value.trim();
+        select(Object.hasOwn(sets, name) ? name : null);
+    });
     cancelButton.addEventListener("click", close);
-    loadButton.addEventListener("click", load);
+    actionButton.addEventListener("click", saving ? save : load);
     overlay.addEventListener("click", (event) => {
         if (event.target === overlay) {
             close();
@@ -586,15 +610,25 @@ function openTextSetBrowser(node, sets) {
     for (const type of ["keydown", "keyup"]) {
         overlay.addEventListener(type, (event) => {
             event.stopPropagation();
-            if (type === "keydown" && event.key === "Escape") {
+            if (type !== "keydown") {
+                return;
+            }
+            if (event.key === "Escape") {
                 close();
+            } else if (event.key === "Enter" && event.target === nameInput) {
+                save();
             }
         });
     }
 
     renderList();
     document.body.append(overlay);
-    panel.focus();
+    if (saving) {
+        nameInput.focus();
+        nameInput.select();
+    } else {
+        panel.focus();
+    }
 }
 
 app.registerExtension({
@@ -625,11 +659,13 @@ app.registerExtension({
                     resizeNode(this);
                 }),
                 addButton(this, "Save Text Set", () => {
-                    saveTextSet(this).catch(showError);
+                    readTextSets()
+                        .then((sets) => openTextSetBrowser(this, sets, true))
+                        .catch(showError);
                 }),
                 addButton(this, "Load Text Set", () => {
                     readTextSets()
-                        .then((sets) => openTextSetBrowser(this, sets))
+                        .then((sets) => openTextSetBrowser(this, sets, false))
                         .catch(showError);
                 }),
             ];

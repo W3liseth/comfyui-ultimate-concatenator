@@ -35,7 +35,7 @@ Ignored rows remain visible and editable, but their text is excluded from the ou
 
 ## Text sets
 
-Click **Save Text Set** to store all current rows (text, labels, order, and included/ignored state) under a name. Saving with an existing name asks before replacing it.
+Click **Save Text Set** to store all current rows (text, labels, order, and included/ignored state). Type a new name to create a set, or select an existing set in the list to replace it; the button then reads **Replace** and the preview shows the content that will be overwritten.
 
 Click **Load Text Set** to browse saved sets. Select a set to preview its rows, then click **Load** (or double-click it) to replace the node's rows. **Delete** removes the selected set after a second click.
 
