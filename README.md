@@ -33,6 +33,14 @@ Moving a row keeps its label, text, and included/ignored state together. Deletin
 
 Ignored rows remain visible and editable, but their text is excluded from the output. If every row is ignored or deleted, the node returns an empty string.
 
+## Text sets
+
+Click **Save Text Set** to store all current rows (text, labels, order, and included/ignored state) under a name. Saving with an existing name asks before replacing it.
+
+Click **Load Text Set** to browse saved sets. Select a set to preview its rows, then click **Load** (or double-click it) to replace the node's rows. **Delete** removes the selected set after a second click.
+
+Text sets are stored locally in `ComfyUI/user/default/ultimate-concatenator/text_sets.json`, so they are shared by every workflow.
+
 ## Concatenation rules
 
 The node first removes ignored rows, then processes the remaining rows in their displayed order. A separator is selected between each pair of included rows:

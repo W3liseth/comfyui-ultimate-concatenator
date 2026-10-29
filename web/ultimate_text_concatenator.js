@@ -1,6 +1,8 @@
 import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
 
 const NODE_NAME = "UltimateTextConcatenator";
+const TEXT_SETS_FILE = "ultimate-concatenator/text_sets.json";
 const DEFAULT_ITEMS = [{ text: "", enabled: true, customLabel: false }];
 const ICONS = {
     delete: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v6m4-6v6"/></svg>',
@@ -57,24 +59,6 @@ function resizeNode(node) {
     });
 }
 
-function removeWidget(node, widget) {
-    if (!widget) {
-        return;
-    }
-    const index = node.widgets.indexOf(widget);
-    if (index !== -1) {
-        node.widgets.splice(index, 1);
-    }
-    widget.onRemove?.();
-}
-
-function clearDynamicWidgets(node) {
-    for (const row of node._ultimateRows ?? []) {
-        removeWidget(node, row.widget);
-    }
-    removeWidget(node, node._ultimateAddButton);
-}
-
 function updateRowState(row) {
     const action = row.enabled ? "Ignore" : "Include";
     row.toggleButton.innerHTML = row.enabled ? ICONS.ignore : ICONS.include;
@@ -122,10 +106,12 @@ function moveRow(node, row, offset) {
     app.graph.setDirtyCanvas(true, true);
 }
 
+// texts_json and delimiter must stay the only serialized widgets, in this order,
+// because the frontend restores widget values by position when a workflow loads.
 function arrangeWidgets(node) {
     const dynamicWidgets = new Set([
         ...node._ultimateRows.map((row) => row.widget),
-        node._ultimateAddButton,
+        ...node._ultimateButtons,
     ]);
     const remaining = node.widgets.filter(
         (widget) =>
@@ -137,7 +123,7 @@ function arrangeWidgets(node) {
     node.widgets = [
         node._ultimateTextsStorage,
         ...node._ultimateRows.map((row) => row.widget),
-        node._ultimateAddButton,
+        ...node._ultimateButtons,
         node._ultimateDelimiter,
         ...remaining,
     ];
@@ -221,7 +207,6 @@ function addTextRow(node, item) {
     styleButtonIcon(downButton);
 
     const textarea = document.createElement("textarea");
-    textarea.value = item.text;
     textarea.rows = 3;
     Object.assign(textarea.style, {
         flex: "1",
@@ -269,6 +254,9 @@ function addTextRow(node, item) {
             },
         },
     );
+    widget.serialize = false;
+    // While a workflow loads, addDOMWidget may restore a saved positional value into the row, so set the text afterwards.
+    textarea.value = item.text;
     const row = {
         widget,
         textarea,
@@ -301,7 +289,7 @@ function addTextRow(node, item) {
             return;
         }
         node._ultimateRows.splice(index, 1);
-        removeWidget(node, row.widget);
+        node.removeWidget(row.widget);
         renumberRows(node);
         arrangeWidgets(node);
         syncItems(node);
@@ -313,24 +301,300 @@ function addTextRow(node, item) {
 }
 
 function buildTextRows(node, items) {
-    clearDynamicWidgets(node);
+    for (const row of node._ultimateRows ?? []) {
+        node.removeWidget(row.widget);
+    }
     node._ultimateRows = [];
     for (const item of items) {
         addTextRow(node, item);
     }
 
-    node._ultimateAddButton = node.addWidget("button", "Add Text", null, () => {
-        addTextRow(node, { text: "", enabled: true, customLabel: false });
-        arrangeWidgets(node);
-        syncItems(node);
-        resizeNode(node);
-    });
-    node._ultimateAddButton.options ??= {};
-    node._ultimateAddButton.options.serialize = false;
-
     arrangeWidgets(node);
     syncItems(node);
     resizeNode(node);
+}
+
+function addButton(node, name, callback) {
+    const button = node.addWidget("button", name, null, callback);
+    button.serialize = false;
+    button.options.serialize = false;
+    return button;
+}
+
+function showError(error) {
+    app.extensionManager.toast.add({
+        severity: "error",
+        summary: "Text sets",
+        detail: error.message,
+        life: 5000,
+    });
+}
+
+async function readTextSets() {
+    const response = await api.getUserData(TEXT_SETS_FILE);
+    if (response.status === 404) {
+        return {};
+    }
+    if (!response.ok) {
+        throw new Error(`Could not read ${TEXT_SETS_FILE}: ${response.status}`);
+    }
+    return await response.json();
+}
+
+async function saveTextSet(node) {
+    const dialog = app.extensionManager.dialog;
+    const name = (
+        await dialog.prompt({
+            title: "Save Text Set",
+            message: "Name of the text set:",
+            defaultValue: node._ultimateSetName ?? "",
+        })
+    )?.trim();
+    if (!name) {
+        return;
+    }
+
+    const sets = await readTextSets();
+    if (
+        Object.hasOwn(sets, name) &&
+        !(await dialog.confirm({
+            title: "Overwrite Text Set",
+            message: `A text set named "${name}" already exists. Replace it?`,
+            type: "overwrite",
+        }))
+    ) {
+        return;
+    }
+
+    sets[name] = currentItems(node);
+    await api.storeUserData(TEXT_SETS_FILE, sets);
+    node._ultimateSetName = name;
+    app.extensionManager.toast.add({
+        severity: "success",
+        summary: "Text set saved",
+        detail: name,
+        life: 3000,
+    });
+}
+
+function createDialogButton(text) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = text;
+    Object.assign(button.style, {
+        padding: "6px 14px",
+        border: "1px solid var(--border-color, #555)",
+        borderRadius: "5px",
+        color: "var(--input-text, #ddd)",
+        background: "var(--comfy-input-bg, #222)",
+        cursor: "pointer",
+    });
+    return button;
+}
+
+function openTextSetBrowser(node, sets) {
+    const overlay = document.createElement("div");
+    Object.assign(overlay.style, {
+        position: "fixed",
+        inset: "0",
+        zIndex: "1000",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0, 0, 0, 0.5)",
+    });
+
+    const panel = document.createElement("div");
+    panel.tabIndex = -1;
+    Object.assign(panel.style, {
+        width: "min(760px, 92vw)",
+        height: "min(520px, 85vh)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        border: "1px solid var(--border-color, #555)",
+        borderRadius: "8px",
+        color: "var(--fg-color, #ddd)",
+        background: "var(--comfy-menu-bg, #353535)",
+        boxShadow: "0 8px 32px rgba(0, 0, 0, 0.5)",
+        outline: "none",
+    });
+
+    const title = document.createElement("div");
+    title.textContent = "Text Sets";
+    Object.assign(title.style, {
+        padding: "12px 16px",
+        fontSize: "16px",
+        fontWeight: "bold",
+        borderBottom: "1px solid var(--border-color, #555)",
+    });
+
+    const body = document.createElement("div");
+    Object.assign(body.style, { flex: "1", minHeight: "0", display: "flex" });
+
+    const list = document.createElement("div");
+    Object.assign(list.style, {
+        width: "220px",
+        flexShrink: "0",
+        display: "flex",
+        flexDirection: "column",
+        gap: "2px",
+        padding: "6px",
+        overflowY: "auto",
+        borderRight: "1px solid var(--border-color, #555)",
+    });
+
+    const preview = document.createElement("div");
+    Object.assign(preview.style, {
+        flex: "1",
+        minWidth: "0",
+        padding: "12px 16px",
+        overflowY: "auto",
+    });
+    body.append(list, preview);
+
+    const footer = document.createElement("div");
+    Object.assign(footer.style, {
+        display: "flex",
+        gap: "8px",
+        padding: "10px 16px",
+        borderTop: "1px solid var(--border-color, #555)",
+    });
+    const deleteButton = createDialogButton("Delete");
+    deleteButton.style.marginRight = "auto";
+    const cancelButton = createDialogButton("Cancel");
+    const loadButton = createDialogButton("Load");
+    footer.append(deleteButton, cancelButton, loadButton);
+
+    panel.append(title, body, footer);
+    overlay.append(panel);
+
+    let selected = null;
+    let deleteArmed = false;
+    const entries = new Map();
+
+    const close = () => overlay.remove();
+
+    const load = () => {
+        if (selected === null) {
+            return;
+        }
+        buildTextRows(node, parseItems(JSON.stringify(sets[selected])));
+        node._ultimateSetName = selected;
+        close();
+    };
+
+    const renderPreview = () => {
+        preview.replaceChildren();
+        if (selected === null) {
+            preview.textContent = "No saved text sets yet.";
+            return;
+        }
+        for (const item of parseItems(JSON.stringify(sets[selected]))) {
+            const entry = document.createElement("div");
+            Object.assign(entry.style, {
+                marginBottom: "10px",
+                opacity: item.enabled ? "1" : "0.45",
+            });
+            const label = document.createElement("div");
+            label.textContent = item.enabled ? item.label : `${item.label} (ignored)`;
+            Object.assign(label.style, {
+                marginBottom: "4px",
+                fontSize: "12px",
+                fontWeight: "bold",
+            });
+            const text = document.createElement("div");
+            text.textContent = item.text;
+            Object.assign(text.style, {
+                minHeight: "1.2em",
+                padding: "6px",
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                borderRadius: "5px",
+                color: "var(--input-text, #ddd)",
+                background: "var(--comfy-input-bg, #222)",
+            });
+            entry.append(label, text);
+            preview.append(entry);
+        }
+    };
+
+    const select = (name) => {
+        selected = name;
+        deleteArmed = false;
+        deleteButton.textContent = "Delete";
+        for (const [entryName, entry] of entries) {
+            entry.style.background =
+                entryName === selected ? "var(--comfy-input-bg, #222)" : "transparent";
+        }
+        loadButton.disabled = deleteButton.disabled = selected === null;
+        renderPreview();
+    };
+
+    const renderList = () => {
+        list.replaceChildren();
+        entries.clear();
+        const names = Object.keys(sets).sort((a, b) => a.localeCompare(b));
+        for (const name of names) {
+            const entry = document.createElement("button");
+            entry.type = "button";
+            entry.textContent = name;
+            entry.title = name;
+            Object.assign(entry.style, {
+                flexShrink: "0",
+                padding: "6px 8px",
+                overflow: "hidden",
+                textAlign: "left",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                border: "none",
+                borderRadius: "4px",
+                color: "var(--input-text, #ddd)",
+                cursor: "pointer",
+            });
+            entry.addEventListener("click", () => select(name));
+            entry.addEventListener("dblclick", load);
+            entries.set(name, entry);
+            list.append(entry);
+        }
+        select(names[0] ?? null);
+    };
+
+    deleteButton.addEventListener("click", () => {
+        if (!deleteArmed) {
+            deleteArmed = true;
+            deleteButton.textContent = "Click again to delete";
+            return;
+        }
+        const remaining = { ...sets };
+        delete remaining[selected];
+        api.storeUserData(TEXT_SETS_FILE, remaining)
+            .then(() => {
+                sets = remaining;
+                renderList();
+            })
+            .catch(showError);
+    });
+    cancelButton.addEventListener("click", close);
+    loadButton.addEventListener("click", load);
+    overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) {
+            close();
+        }
+    });
+    // Keep keyboard shortcuts such as Delete from reaching the canvas while the browser is open.
+    for (const type of ["keydown", "keyup"]) {
+        overlay.addEventListener(type, (event) => {
+            event.stopPropagation();
+            if (type === "keydown" && event.key === "Escape") {
+                close();
+            }
+        });
+    }
+
+    renderList();
+    document.body.append(overlay);
+    panel.focus();
 }
 
 app.registerExtension({
@@ -353,6 +617,22 @@ app.registerExtension({
             this._ultimateTextsStorage.options.hidden = true;
             this._ultimateTextsStorage.hidden = true;
             this._ultimateTextsStorage.computeSize = () => [0, -4];
+            this._ultimateButtons = [
+                addButton(this, "Add Text", () => {
+                    addTextRow(this, { text: "", enabled: true, customLabel: false });
+                    arrangeWidgets(this);
+                    syncItems(this);
+                    resizeNode(this);
+                }),
+                addButton(this, "Save Text Set", () => {
+                    saveTextSet(this).catch(showError);
+                }),
+                addButton(this, "Load Text Set", () => {
+                    readTextSets()
+                        .then((sets) => openTextSetBrowser(this, sets))
+                        .catch(showError);
+                }),
+            ];
             buildTextRows(this, parseItems(this._ultimateTextsStorage.value));
             return result;
         };
@@ -365,7 +645,9 @@ app.registerExtension({
             if (Array.isArray(values)) {
                 this._ultimateTextsStorage.value =
                     values[0] ?? JSON.stringify(DEFAULT_ITEMS);
-                this._ultimateDelimiter.value = values[1] ?? ", ";
+                // Older saves also stored every row and the buttons between these two values; the delimiter was always last.
+                this._ultimateDelimiter.value =
+                    (values.length > 1 ? values[values.length - 1] : null) ?? ", ";
             } else if (values && typeof values === "object") {
                 this._ultimateTextsStorage.value =
                     values.texts_json ?? JSON.stringify(DEFAULT_ITEMS);
