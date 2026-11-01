@@ -43,6 +43,8 @@ Sockets are always listed in the same order as the rows. Moving or deleting a ro
 
 Replacement rules are listed under `delimiter`. Click **Add Replacement**, then fill in the text to find and the text to put instead. Rules are applied to the final concatenated text, from top to bottom, each one on the result of the previous one. Every occurrence is replaced; a rule whose text is not found does nothing. An empty replacement removes the text.
 
+Separate several texts with `|` to replace all of them with the same text. For example, `black, wavy hair | red hair | brown hair` → `blonde, straight hair` replaces each of the three. Commas are part of the text to find. Spaces around `|` are ignored, and a longer text is matched before a shorter one it contains.
+
 Each rule has these buttons:
 
 - **Aa:** match case. Off by default, so `Red` and `red` are both replaced.

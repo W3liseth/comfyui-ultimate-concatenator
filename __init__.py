@@ -5,12 +5,13 @@ import re
 def apply_replacements(text, replacements, delimiter):
     removed = False
     for rule in replacements.get("rules", []):
-        find = rule.get("find", "")
-        if not find or not rule.get("enabled", True):
+        # Several texts can be searched at once by separating them with "|"; longer ones are tried first.
+        terms = sorted({term.strip() for term in rule.get("find", "").split("|")} - {""}, key=len, reverse=True)
+        if not terms or not rule.get("enabled", True):
             continue
-        pattern = re.escape(find)
+        pattern = "|".join(re.escape(term) for term in terms)
         if rule.get("whole_word", True):
-            pattern = rf"(?<!\w){pattern}(?!\w)"
+            pattern = rf"(?<!\w)(?:{pattern})(?!\w)"
         replace = rule.get("replace", "")
         flags = 0 if rule.get("match_case", False) else re.IGNORECASE
         text, count = re.subn(pattern, lambda match: replace, text, flags=flags)
