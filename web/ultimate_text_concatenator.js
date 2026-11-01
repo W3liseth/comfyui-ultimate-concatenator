@@ -51,6 +51,62 @@ function syncItems(node) {
     node._ultimateTextsStorage.value = JSON.stringify(currentItems(node));
 }
 
+// Row N always owns the optional STRING socket text_N, so sockets stay in row order; a connected socket replaces the row text.
+function inputSlot(node, index) {
+    return node.inputs.findIndex((input) => input.name === `text_${index + 1}`);
+}
+
+function rowLinks(node) {
+    return node._ultimateRows.map((row, index) => {
+        const link = node.getInputLink(inputSlot(node, index));
+        return link && { id: link.origin_id, slot: link.origin_slot };
+    });
+}
+
+// links lists, in the new row order, the source each row socket must be connected to.
+function syncInputs(node, links) {
+    const rows = node._ultimateRows;
+    rows.forEach((row, index) => {
+        if (inputSlot(node, index) === -1) {
+            node.addInput(`text_${index + 1}`, "STRING");
+        }
+    });
+    if (links) {
+        const slots = rows.map((row, index) => inputSlot(node, index));
+        slots.forEach((slot, index) => {
+            const link = node.getInputLink(slot);
+            if (link && (link.origin_id !== links[index]?.id || link.origin_slot !== links[index]?.slot)) {
+                node.disconnectInput(slot);
+            }
+        });
+        slots.forEach((slot, index) => {
+            if (links[index] && node.inputs[slot].link == null) {
+                node.graph.getNodeById(links[index].id).connect(links[index].slot, node, slot);
+            }
+        });
+    }
+    for (let slot = node.inputs.length - 1; slot >= 0; slot--) {
+        const match = /^text_(\d+)$/.exec(node.inputs[slot].name);
+        if (match && Number(match[1]) > rows.length) {
+            node.removeInput(slot);
+        }
+    }
+    rows.forEach((row, index) => {
+        node.inputs[inputSlot(node, index)].label = row.label.value;
+    });
+    updateLinkedRows(node);
+}
+
+function updateLinkedRows(node) {
+    node._ultimateRows.forEach((row, index) => {
+        const linked = node.inputs[inputSlot(node, index)]?.link != null;
+        row.textarea.disabled = linked;
+        row.textarea.title = linked ? "This text comes from the connected input" : "";
+        row.textarea.style.cursor = linked ? "not-allowed" : "";
+        row.textarea.style.fontStyle = linked ? "italic" : "";
+    });
+}
+
 function resizeNode(node) {
     requestAnimationFrame(() => {
         const size = node.computeSize();
@@ -74,7 +130,6 @@ function updateRowState(row) {
 function renumberRows(node) {
     node._ultimateRows.forEach((row, index) => {
         const defaultLabel = `Text ${index + 1}`;
-        row.widget.name = `text_${index + 1}`;
         if (!row.customLabel) {
             row.label.value = defaultLabel;
         }
@@ -98,11 +153,14 @@ function moveRow(node, row, offset) {
         return;
     }
 
+    const links = rowLinks(node);
+    links.splice(target, 0, ...links.splice(index, 1));
     node._ultimateRows.splice(index, 1);
     node._ultimateRows.splice(target, 0, row);
     renumberRows(node);
     arrangeWidgets(node);
     syncItems(node);
+    syncInputs(node, links);
     app.graph.setDirtyCanvas(true, true);
 }
 
@@ -241,8 +299,10 @@ function addTextRow(node, item) {
     });
 
     container.append(label, textarea, upButton, downButton, toggleButton, removeButton);
+    // Widget names must stay unique and never change; they are unrelated to the positional text_N sockets.
+    node._ultimateRowSerial = (node._ultimateRowSerial ?? 0) + 1;
     const widget = node.addDOMWidget(
-        `text_${node._ultimateRows.length + 1}`,
+        `text_row_${node._ultimateRowSerial}`,
         "ultimate-text-row",
         container,
         {
@@ -274,6 +334,8 @@ function addTextRow(node, item) {
         row.customLabel = true;
         textarea.setAttribute("aria-label", label.value || defaultLabel);
         syncItems(node);
+        syncInputs(node);
+        app.graph.setDirtyCanvas(true, false);
     });
     upButton.addEventListener("click", () => moveRow(node, row, -1));
     downButton.addEventListener("click", () => moveRow(node, row, 1));
@@ -288,11 +350,14 @@ function addTextRow(node, item) {
         if (index === -1) {
             return;
         }
+        const links = rowLinks(node);
+        links.splice(index, 1);
         node._ultimateRows.splice(index, 1);
         node.removeWidget(row.widget);
         renumberRows(node);
         arrangeWidgets(node);
         syncItems(node);
+        syncInputs(node, links);
         resizeNode(node);
     });
 
@@ -311,6 +376,7 @@ function buildTextRows(node, items) {
 
     arrangeWidgets(node);
     syncItems(node);
+    syncInputs(node);
     resizeNode(node);
 }
 
@@ -656,6 +722,7 @@ app.registerExtension({
                     addTextRow(this, { text: "", enabled: true, customLabel: false });
                     arrangeWidgets(this);
                     syncItems(this);
+                    syncInputs(this);
                     resizeNode(this);
                 }),
                 addButton(this, "Save Text Set", () => {
@@ -691,6 +758,13 @@ app.registerExtension({
             }
 
             buildTextRows(this, parseItems(this._ultimateTextsStorage.value));
+            return result;
+        };
+
+        const onConnectionsChange = nodeType.prototype.onConnectionsChange;
+        nodeType.prototype.onConnectionsChange = function () {
+            const result = onConnectionsChange?.apply(this, arguments);
+            updateLinkedRows(this);
             return result;
         };
     },

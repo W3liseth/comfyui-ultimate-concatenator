@@ -1,6 +1,16 @@
 import json
 
 
+class TextInputs(dict):
+    """Optional STRING sockets text_1, text_2, ... created by the frontend, one per row in row order."""
+
+    def __contains__(self, key):
+        return key.startswith("text_")
+
+    def __getitem__(self, key):
+        return ("STRING", {"forceInput": True})
+
+
 class UltimateTextConcatenator:
     @classmethod
     def INPUT_TYPES(cls):
@@ -8,7 +18,8 @@ class UltimateTextConcatenator:
             "required": {
                 "texts_json": ("STRING", {"default": '[{"text":"","enabled":true}]', "hidden": True}),
                 "delimiter": ("STRING", {"default": ", "}),
-            }
+            },
+            "optional": TextInputs(),
         }
 
     RETURN_TYPES = ("STRING",)
@@ -16,16 +27,17 @@ class UltimateTextConcatenator:
     FUNCTION = "concatenate"
     CATEGORY = "text"
 
-    def concatenate(self, texts_json, delimiter):
+    def concatenate(self, texts_json, delimiter, **text_inputs):
         texts = json.loads(texts_json)
         if not isinstance(texts, list):
             raise ValueError("texts_json must contain a JSON list")
 
         enabled_texts = []
-        for item in texts:
+        for index, item in enumerate(texts):
             if isinstance(item, dict):
                 if item.get("enabled", True):
-                    enabled_texts.append(str(item.get("text", "")))
+                    text = text_inputs.get(f"text_{index + 1}", item.get("text", ""))
+                    enabled_texts.append(str(text))
             else:
                 enabled_texts.append(str(item))
 

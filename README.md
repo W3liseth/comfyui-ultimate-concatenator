@@ -33,6 +33,12 @@ Moving a row keeps its label, text, and included/ignored state together. Deletin
 
 Ignored rows remain visible and editable, but their text is excluded from the output. If every row is ignored or deleted, the node returns an empty string.
 
+## Connecting other nodes
+
+Each row has its own optional `STRING` input socket, named after the row label. When a socket is connected, the connected string replaces the row text: the text field is locked and shown in italics, and its typed text is used again once the link is removed. Ignored rows stay excluded even when connected.
+
+Sockets are always listed in the same order as the rows. Moving or deleting a row moves its connection with it, so every connected string stays attached to the same text. Deleting a row also deletes its connection.
+
 ## Text sets
 
 Click **Save Text Set** to store all current rows (text, labels, order, and included/ignored state). Type a new name to create a set, or select an existing set in the list to replace it; the button then reads **Replace** and the preview shows the content that will be overwritten.
