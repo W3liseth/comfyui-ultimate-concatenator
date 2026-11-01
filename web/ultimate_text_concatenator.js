@@ -4,6 +4,7 @@ import { api } from "../../scripts/api.js";
 const NODE_NAME = "UltimateTextConcatenator";
 const TEXT_SETS_FILE = "ultimate-concatenator/text_sets.json";
 const DEFAULT_ITEMS = [{ text: "", enabled: true, customLabel: false }];
+const DEFAULT_REPLACEMENTS = '{"clean_up":true,"rules":[]}';
 const ICONS = {
     delete: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v6m4-6v6"/></svg>',
     up: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>',
@@ -49,6 +50,38 @@ function currentItems(node) {
 
 function syncItems(node) {
     node._ultimateTextsStorage.value = JSON.stringify(currentItems(node));
+}
+
+function parseReplacements(value) {
+    try {
+        const config = JSON.parse(value);
+        if (Array.isArray(config?.rules)) {
+            return { clean_up: config.clean_up !== false, rules: config.rules };
+        }
+    } catch {}
+    return JSON.parse(DEFAULT_REPLACEMENTS);
+}
+
+function currentReplacements(node) {
+    return {
+        clean_up: node._ultimateCleanUp.value,
+        rules: node._ultimateReplacementRows.map((row) => ({
+            find: row.find.value,
+            replace: row.replace.value,
+            match_case: row.matchCase,
+            whole_word: row.wholeWord,
+            enabled: row.enabled,
+        })),
+    };
+}
+
+function syncReplacements(node) {
+    node._ultimateReplacementsStorage.value = JSON.stringify(currentReplacements(node));
+}
+
+// Text sets saved before replacements existed are a plain list of rows.
+function setTexts(set) {
+    return Array.isArray(set) ? set : set.texts;
 }
 
 // Row N always owns the optional STRING socket text_N, so sockets stay in row order; a connected socket replaces the row text.
@@ -164,27 +197,20 @@ function moveRow(node, row, offset) {
     app.graph.setDirtyCanvas(true, true);
 }
 
-// texts_json and delimiter must stay the only serialized widgets, in this order,
+// texts_json, delimiter and replacements_json must stay the only serialized widgets, in this order,
 // because the frontend restores widget values by position when a workflow loads.
 function arrangeWidgets(node) {
-    const dynamicWidgets = new Set([
-        ...node._ultimateRows.map((row) => row.widget),
-        ...node._ultimateButtons,
-    ]);
-    const remaining = node.widgets.filter(
-        (widget) =>
-            widget !== node._ultimateTextsStorage &&
-            widget !== node._ultimateDelimiter &&
-            !dynamicWidgets.has(widget),
-    );
-
-    node.widgets = [
+    const ordered = [
         node._ultimateTextsStorage,
         ...node._ultimateRows.map((row) => row.widget),
         ...node._ultimateButtons,
         node._ultimateDelimiter,
-        ...remaining,
+        ...node._ultimateReplacementRows.map((row) => row.widget),
+        ...node._ultimateReplacementWidgets,
+        node._ultimateReplacementsStorage,
     ];
+    const known = new Set(ordered);
+    node.widgets = [...ordered, ...node.widgets.filter((widget) => !known.has(widget))];
 }
 
 function styleButton(button) {
@@ -223,6 +249,27 @@ function styleButtonIcon(button) {
     });
 }
 
+function createButton(content, title, ariaLabel) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.innerHTML = content;
+    button.title = title;
+    button.setAttribute("aria-label", ariaLabel);
+    styleButton(button);
+    styleButtonIcon(button);
+    return button;
+}
+
+function styleField(field) {
+    Object.assign(field.style, {
+        boxSizing: "border-box",
+        border: "1px solid var(--border-color, #555)",
+        borderRadius: "5px",
+        color: "var(--input-text, #ddd)",
+        background: "var(--comfy-input-bg, #222)",
+    });
+}
+
 function addTextRow(node, item) {
     const defaultLabel = `Text ${node._ultimateRows.length + 1}`;
     const container = document.createElement("div");
@@ -236,47 +283,20 @@ function addTextRow(node, item) {
         boxSizing: "border-box",
     });
 
-    const removeButton = document.createElement("button");
-    removeButton.type = "button";
-    removeButton.innerHTML = ICONS.delete;
-    removeButton.title = "Delete this text field";
-    removeButton.setAttribute("aria-label", "Delete");
-    styleButton(removeButton);
-    styleButtonIcon(removeButton);
-
-    const toggleButton = document.createElement("button");
-    toggleButton.type = "button";
-    styleButton(toggleButton);
-
-    const upButton = document.createElement("button");
-    upButton.type = "button";
-    upButton.innerHTML = ICONS.up;
-    upButton.title = "Move this field up";
-    upButton.setAttribute("aria-label", "Move up");
-    styleButton(upButton);
-    styleButtonIcon(upButton);
-
-    const downButton = document.createElement("button");
-    downButton.type = "button";
-    downButton.innerHTML = ICONS.down;
-    downButton.title = "Move this field down";
-    downButton.setAttribute("aria-label", "Move down");
-    styleButton(downButton);
-    styleButtonIcon(downButton);
+    const removeButton = createButton(ICONS.delete, "Delete this text field", "Delete");
+    const toggleButton = createButton("", "", "");
+    const upButton = createButton(ICONS.up, "Move this field up", "Move up");
+    const downButton = createButton(ICONS.down, "Move this field down", "Move down");
 
     const textarea = document.createElement("textarea");
     textarea.rows = 3;
+    styleField(textarea);
     Object.assign(textarea.style, {
         flex: "1",
         minWidth: "0",
         minHeight: "72px",
         padding: "6px",
         resize: "vertical",
-        boxSizing: "border-box",
-        border: "1px solid var(--border-color, #555)",
-        borderRadius: "5px",
-        color: "var(--input-text, #ddd)",
-        background: "var(--comfy-input-bg, #222)",
     });
 
     const label = document.createElement("input");
@@ -285,16 +305,12 @@ function addTextRow(node, item) {
     label.placeholder = defaultLabel;
     label.title = "Edit this field label";
     label.setAttribute("aria-label", `Label de ${defaultLabel}`);
+    styleField(label);
     Object.assign(label.style, {
         width: "96px",
         minWidth: "72px",
         height: "32px",
         padding: "0 6px",
-        boxSizing: "border-box",
-        border: "1px solid var(--border-color, #555)",
-        borderRadius: "5px",
-        color: "var(--input-text, #ddd)",
-        background: "var(--comfy-input-bg, #222)",
         fontSize: "12px",
     });
 
@@ -380,6 +396,150 @@ function buildTextRows(node, items) {
     resizeNode(node);
 }
 
+function setFlagButtonState(button, active) {
+    button.style.opacity = active ? "1" : "0.4";
+    button.style.borderColor = active ? "var(--input-text, #ddd)" : "var(--border-color, #555)";
+    button.setAttribute("aria-pressed", String(active));
+}
+
+function updateReplacementState(row) {
+    setFlagButtonState(row.caseButton, row.matchCase);
+    setFlagButtonState(row.wordButton, row.wholeWord);
+    row.toggleButton.innerHTML = row.enabled ? ICONS.ignore : ICONS.include;
+    styleButtonIcon(row.toggleButton);
+    row.toggleButton.title = row.enabled ? "Ignore this replacement" : "Apply this replacement";
+    row.toggleButton.setAttribute("aria-label", row.enabled ? "Ignore" : "Include");
+    for (const field of [row.find, row.replace]) {
+        field.style.opacity = row.enabled ? "1" : "0.45";
+        field.style.textDecoration = row.enabled ? "none" : "line-through";
+    }
+}
+
+function renumberReplacementRows(node) {
+    const rows = node._ultimateReplacementRows;
+    rows.forEach((row, index) => {
+        setOrderButtonState(row.upButton, index > 0);
+        setOrderButtonState(row.downButton, index < rows.length - 1);
+    });
+}
+
+function moveReplacementRow(node, row, offset) {
+    const rows = node._ultimateReplacementRows;
+    const index = rows.indexOf(row);
+    const target = index + offset;
+    if (index === -1 || target < 0 || target >= rows.length) {
+        return;
+    }
+    rows.splice(target, 0, ...rows.splice(index, 1));
+    renumberReplacementRows(node);
+    arrangeWidgets(node);
+    syncReplacements(node);
+    app.graph.setDirtyCanvas(true, true);
+}
+
+function addReplacementRow(node, rule) {
+    const container = document.createElement("div");
+    Object.assign(container.style, {
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "2px 0",
+        boxSizing: "border-box",
+    });
+
+    const find = document.createElement("input");
+    const replace = document.createElement("input");
+    for (const [field, placeholder, title] of [
+        [find, "Find", "Text to find"],
+        [replace, "Replace with", "Replacement text (leave empty to remove the found text)"],
+    ]) {
+        field.type = "text";
+        field.placeholder = placeholder;
+        field.title = title;
+        styleField(field);
+        Object.assign(field.style, { flex: "1", minWidth: "0", height: "32px", padding: "0 6px" });
+    }
+    find.value = String(rule.find ?? "");
+    replace.value = String(rule.replace ?? "");
+
+    const arrow = document.createElement("span");
+    arrow.textContent = "→";
+    arrow.style.flexShrink = "0";
+
+    const caseButton = createButton("Aa", "Match case", "Match case");
+    const wordButton = createButton("ab", "Whole word only", "Whole word only");
+    wordButton.style.textDecoration = "underline";
+    const upButton = createButton(ICONS.up, "Move this replacement up", "Move up");
+    const downButton = createButton(ICONS.down, "Move this replacement down", "Move down");
+    const toggleButton = createButton("", "", "");
+    const removeButton = createButton(ICONS.delete, "Delete this replacement", "Delete");
+
+    container.append(find, arrow, replace, caseButton, wordButton, upButton, downButton, toggleButton, removeButton);
+    node._ultimateRowSerial = (node._ultimateRowSerial ?? 0) + 1;
+    const widget = node.addDOMWidget(
+        `replacement_row_${node._ultimateRowSerial}`,
+        "ultimate-replacement-row",
+        container,
+        { serialize: false, getMinHeight: () => 40 },
+    );
+    widget.serialize = false;
+    const row = {
+        widget,
+        find,
+        replace,
+        caseButton,
+        wordButton,
+        upButton,
+        downButton,
+        toggleButton,
+        matchCase: rule.match_case === true,
+        wholeWord: rule.whole_word !== false,
+        enabled: rule.enabled !== false,
+    };
+    node._ultimateReplacementRows.push(row);
+
+    const toggle = (flag) => {
+        row[flag] = !row[flag];
+        updateReplacementState(row);
+        syncReplacements(node);
+        app.graph.setDirtyCanvas(true, false);
+    };
+    find.addEventListener("input", () => syncReplacements(node));
+    replace.addEventListener("input", () => syncReplacements(node));
+    caseButton.addEventListener("click", () => toggle("matchCase"));
+    wordButton.addEventListener("click", () => toggle("wholeWord"));
+    toggleButton.addEventListener("click", () => toggle("enabled"));
+    upButton.addEventListener("click", () => moveReplacementRow(node, row, -1));
+    downButton.addEventListener("click", () => moveReplacementRow(node, row, 1));
+    removeButton.addEventListener("click", () => {
+        node._ultimateReplacementRows.splice(node._ultimateReplacementRows.indexOf(row), 1);
+        node.removeWidget(widget);
+        renumberReplacementRows(node);
+        arrangeWidgets(node);
+        syncReplacements(node);
+        resizeNode(node);
+    });
+
+    updateReplacementState(row);
+    renumberReplacementRows(node);
+}
+
+function buildReplacementRows(node, config) {
+    for (const row of node._ultimateReplacementRows) {
+        node.removeWidget(row.widget);
+    }
+    node._ultimateReplacementRows = [];
+    node._ultimateCleanUp.value = config.clean_up;
+    for (const rule of config.rules) {
+        addReplacementRow(node, rule);
+    }
+
+    arrangeWidgets(node);
+    syncReplacements(node);
+    resizeNode(node);
+}
+
 function addButton(node, name, callback) {
     const button = node.addWidget("button", name, null, callback);
     button.serialize = false;
@@ -408,7 +568,10 @@ async function readTextSets() {
 }
 
 async function saveTextSet(node, sets, name) {
-    await api.storeUserData(TEXT_SETS_FILE, { ...sets, [name]: currentItems(node) });
+    await api.storeUserData(TEXT_SETS_FILE, {
+        ...sets,
+        [name]: { texts: currentItems(node), replacements: currentReplacements(node) },
+    });
     node._ultimateSetName = name;
     app.extensionManager.toast.add({
         severity: "success",
@@ -534,7 +697,11 @@ function openTextSetBrowser(node, sets, saving) {
         if (selected === null) {
             return;
         }
-        buildTextRows(node, parseItems(JSON.stringify(sets[selected])));
+        const set = sets[selected];
+        buildTextRows(node, parseItems(JSON.stringify(setTexts(set))));
+        if (!Array.isArray(set)) {
+            buildReplacementRows(node, parseReplacements(JSON.stringify(set.replacements)));
+        }
         node._ultimateSetName = selected;
         close();
     };
@@ -555,7 +722,7 @@ function openTextSetBrowser(node, sets, saving) {
                 : "No saved text sets yet.";
             return;
         }
-        for (const item of parseItems(JSON.stringify(sets[selected]))) {
+        for (const item of parseItems(JSON.stringify(setTexts(sets[selected])))) {
             const entry = document.createElement("div");
             Object.assign(entry.style, {
                 marginBottom: "10px",
@@ -580,6 +747,24 @@ function openTextSetBrowser(node, sets, saving) {
                 background: "var(--comfy-input-bg, #222)",
             });
             entry.append(label, text);
+            preview.append(entry);
+        }
+        const rules = Array.isArray(sets[selected]) ? [] : sets[selected].replacements.rules;
+        if (rules.length) {
+            const heading = document.createElement("div");
+            heading.textContent = "Replacements";
+            Object.assign(heading.style, { margin: "14px 0 6px", fontSize: "12px", fontWeight: "bold" });
+            preview.append(heading);
+        }
+        for (const rule of rules) {
+            const entry = document.createElement("div");
+            entry.textContent = `${rule.find} → ${rule.replace || "(removed)"}${rule.enabled === false ? " (ignored)" : ""}`;
+            Object.assign(entry.style, {
+                marginBottom: "4px",
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                opacity: rule.enabled === false ? "0.45" : "1",
+            });
             preview.append(entry);
         }
     };
@@ -713,10 +898,33 @@ app.registerExtension({
             this._ultimateDelimiter = this.widgets.find(
                 (widget) => widget.name === "delimiter",
             );
-            this._ultimateTextsStorage.options ??= {};
-            this._ultimateTextsStorage.options.hidden = true;
-            this._ultimateTextsStorage.hidden = true;
-            this._ultimateTextsStorage.computeSize = () => [0, -4];
+            this._ultimateReplacementsStorage = this.widgets.find(
+                (widget) => widget.name === "replacements_json",
+            );
+            for (const storage of [this._ultimateTextsStorage, this._ultimateReplacementsStorage]) {
+                storage.options ??= {};
+                storage.options.hidden = true;
+                storage.hidden = true;
+                storage.computeSize = () => [0, -4];
+            }
+            this._ultimateReplacementRows = [];
+            this._ultimateCleanUp = this.addWidget(
+                "toggle",
+                "Clean up removed words",
+                true,
+                () => syncReplacements(this),
+            );
+            this._ultimateCleanUp.serialize = false;
+            this._ultimateCleanUp.options.serialize = false;
+            this._ultimateReplacementWidgets = [
+                addButton(this, "Add Replacement", () => {
+                    addReplacementRow(this, {});
+                    arrangeWidgets(this);
+                    syncReplacements(this);
+                    resizeNode(this);
+                }),
+                this._ultimateCleanUp,
+            ];
             this._ultimateButtons = [
                 addButton(this, "Add Text", () => {
                     addTextRow(this, { text: "", enabled: true, customLabel: false });
@@ -737,6 +945,7 @@ app.registerExtension({
                 }),
             ];
             buildTextRows(this, parseItems(this._ultimateTextsStorage.value));
+            buildReplacementRows(this, parseReplacements(this._ultimateReplacementsStorage.value));
             return result;
         };
 
@@ -746,18 +955,24 @@ app.registerExtension({
             const values = info?.widgets_values;
 
             if (Array.isArray(values)) {
+                // The first release also stored every row and the Add Text button before the delimiter, which was always last.
+                const firstRelease = values.length > 3;
                 this._ultimateTextsStorage.value =
                     values[0] ?? JSON.stringify(DEFAULT_ITEMS);
-                // Older saves also stored every row and the buttons between these two values; the delimiter was always last.
                 this._ultimateDelimiter.value =
-                    (values.length > 1 ? values[values.length - 1] : null) ?? ", ";
+                    (firstRelease ? values[values.length - 1] : values[1]) ?? ", ";
+                this._ultimateReplacementsStorage.value =
+                    (firstRelease ? null : values[2]) ?? DEFAULT_REPLACEMENTS;
             } else if (values && typeof values === "object") {
                 this._ultimateTextsStorage.value =
                     values.texts_json ?? JSON.stringify(DEFAULT_ITEMS);
                 this._ultimateDelimiter.value = values.delimiter ?? ", ";
+                this._ultimateReplacementsStorage.value =
+                    values.replacements_json ?? DEFAULT_REPLACEMENTS;
             }
 
             buildTextRows(this, parseItems(this._ultimateTextsStorage.value));
+            buildReplacementRows(this, parseReplacements(this._ultimateReplacementsStorage.value));
             return result;
         };
 

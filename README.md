@@ -39,11 +39,25 @@ Each row has its own optional `STRING` input socket, named after the row label. 
 
 Sockets are always listed in the same order as the rows. Moving or deleting a row moves its connection with it, so every connected string stays attached to the same text. Deleting a row also deletes its connection.
 
+## Replacements
+
+Replacement rules are listed under `delimiter`. Click **Add Replacement**, then fill in the text to find and the text to put instead. Rules are applied to the final concatenated text, from top to bottom, each one on the result of the previous one. Every occurrence is replaced; a rule whose text is not found does nothing. An empty replacement removes the text.
+
+Each rule has these buttons:
+
+- **Aa:** match case. Off by default, so `Red` and `red` are both replaced.
+- **ab:** whole word only. On by default, so replacing `cat` does not change `category`.
+- **Up / down arrows:** change the order in which rules are applied.
+- **Eye:** ignores or applies the rule again without deleting it.
+- **Trash:** deletes the rule.
+
+When **Clean up removed words** is on (default) and a rule removed some text, the whole output is tidied: repeated delimiters are merged (`red, , green` becomes `red, green`), a delimiter left at the start or end is removed, runs of spaces become one space, and leading and trailing spaces are trimmed.
+
 ## Text sets
 
-Click **Save Text Set** to store all current rows (text, labels, order, and included/ignored state). Type a new name to create a set, or select an existing set in the list to replace it; the button then reads **Replace** and the preview shows the content that will be overwritten.
+Click **Save Text Set** to store all current rows (text, labels, order, and included/ignored state) and the replacement rules. Type a new name to create a set, or select an existing set in the list to replace it; the button then reads **Replace** and the preview shows the content that will be overwritten.
 
-Click **Load Text Set** to browse saved sets. Select a set to preview its rows, then click **Load** (or double-click it) to replace the node's rows. **Delete** removes the selected set after a second click.
+Click **Load Text Set** to browse saved sets. Select a set to preview its rows, then click **Load** (or double-click it) to replace the node's rows and replacement rules. Sets saved before replacements existed only replace the rows. **Delete** removes the selected set after a second click.
 
 Text sets are stored locally in `ComfyUI/user/default/ultimate-concatenator/text_sets.json`, so they are shared by every workflow.
 

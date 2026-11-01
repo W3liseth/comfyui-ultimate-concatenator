@@ -1,4 +1,36 @@
 import json
+import re
+
+
+def apply_replacements(text, replacements, delimiter):
+    removed = False
+    for rule in replacements.get("rules", []):
+        find = rule.get("find", "")
+        if not find or not rule.get("enabled", True):
+            continue
+        pattern = re.escape(find)
+        if rule.get("whole_word", True):
+            pattern = rf"(?<!\w){pattern}(?!\w)"
+        replace = rule.get("replace", "")
+        flags = 0 if rule.get("match_case", False) else re.IGNORECASE
+        text, count = re.subn(pattern, lambda match: replace, text, flags=flags)
+        removed = removed or (count > 0 and not replace)
+
+    if removed and replacements.get("clean_up", True):
+        text = clean_up(text, delimiter)
+    return text
+
+
+def clean_up(text, delimiter):
+    """Remove the empty delimiters and extra spaces left behind by removed words."""
+    separator = delimiter.strip()
+    if separator:
+        mark = re.escape(separator)
+        text = re.sub(rf"\s*{mark}(?:\s*{mark})+\s*", lambda match: delimiter, text)
+        text = re.sub(rf"^\s*{mark}\s*|\s*{mark}\s*$", "", text)
+        if not delimiter[0].isspace():
+            text = re.sub(rf"[ \t]+{mark}", lambda match: separator, text)
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
 class TextInputs(dict):
@@ -18,6 +50,7 @@ class UltimateTextConcatenator:
             "required": {
                 "texts_json": ("STRING", {"default": '[{"text":"","enabled":true}]', "hidden": True}),
                 "delimiter": ("STRING", {"default": ", "}),
+                "replacements_json": ("STRING", {"default": '{"clean_up":true,"rules":[]}', "hidden": True}),
             },
             "optional": TextInputs(),
         }
@@ -27,7 +60,7 @@ class UltimateTextConcatenator:
     FUNCTION = "concatenate"
     CATEGORY = "text"
 
-    def concatenate(self, texts_json, delimiter, **text_inputs):
+    def concatenate(self, texts_json, delimiter, replacements_json, **text_inputs):
         texts = json.loads(texts_json)
         if not isinstance(texts, list):
             raise ValueError("texts_json must contain a JSON list")
@@ -55,7 +88,7 @@ class UltimateTextConcatenator:
             result += separator + text
             previous = text
 
-        return (result,)
+        return (apply_replacements(result, json.loads(replacements_json), delimiter),)
 
 
 NODE_CLASS_MAPPINGS = {
