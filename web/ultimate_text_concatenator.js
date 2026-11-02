@@ -197,8 +197,8 @@ function moveRow(node, row, offset) {
     app.graph.setDirtyCanvas(true, true);
 }
 
-// texts_json, delimiter and replacements_json must stay the only serialized widgets, in this order,
-// because the frontend restores widget values by position when a workflow loads.
+// texts_json, delimiter, replacements_json and wait_for_validation must stay the only serialized widgets,
+// in this order, because the frontend restores widget values by position when a workflow loads.
 function arrangeWidgets(node) {
     const ordered = [
         node._ultimateTextsStorage,
@@ -208,8 +208,12 @@ function arrangeWidgets(node) {
         ...node._ultimateReplacementRows.map((row) => row.widget),
         ...node._ultimateReplacementWidgets,
         node._ultimateReplacementsStorage,
+        node._ultimateWait,
+        node._ultimatePreviewToggle,
+        ...(node._ultimateWait.value ? node._ultimateValidationButtons : []),
+        ...(node._ultimatePreview ? [node._ultimatePreview] : []),
     ];
-    const known = new Set(ordered);
+    const known = new Set([...ordered, ...node._ultimateValidationButtons]);
     node.widgets = [...ordered, ...node.widgets.filter((widget) => !known.has(widget))];
 }
 
@@ -550,10 +554,92 @@ function addButton(node, name, callback) {
 function showError(error) {
     app.extensionManager.toast.add({
         severity: "error",
-        summary: "Text sets",
+        summary: "Ultimate Text Concatenator",
         detail: error.message,
         life: 5000,
     });
+}
+
+// Execution ids of nodes inside subgraphs are the path of node ids, such as "12:5".
+function nodeByExecutionId(id) {
+    let graph = app.rootGraph;
+    let node = null;
+    for (const part of String(id).split(":")) {
+        node = graph?.getNodeById(Number(part));
+        graph = node?.subgraph;
+    }
+    return node;
+}
+
+function setPreviewText(node, text) {
+    node._ultimatePreviewText = text;
+    if (node._ultimatePreview) {
+        node._ultimatePreview.element.value = text;
+    }
+}
+
+function setPreviewShown(node, shown) {
+    node.properties.ultimate_preview = shown;
+    if (shown && !node._ultimatePreview) {
+        const textarea = document.createElement("textarea");
+        textarea.readOnly = true;
+        textarea.value = node._ultimatePreviewText ?? "";
+        textarea.placeholder = "The text sent to the next node appears here after a run or a Refresh.";
+        styleField(textarea);
+        Object.assign(textarea.style, { width: "100%", minHeight: "80px", padding: "6px", resize: "vertical" });
+        node._ultimatePreview = node.addDOMWidget("ultimate_preview", "ultimate-preview", textarea, {
+            serialize: false,
+            getMinHeight: () => 90,
+        });
+        node._ultimatePreview.serialize = false;
+    } else if (!shown && node._ultimatePreview) {
+        node.removeWidget(node._ultimatePreview);
+        node._ultimatePreview = null;
+    }
+    arrangeWidgets(node);
+    resizeNode(node);
+}
+
+function setPaused(node, paused) {
+    node._ultimateValidationButtons[1].label = paused ? "Validate (workflow paused)" : "Validate";
+    app.graph.setDirtyCanvas(true, false);
+}
+
+// Keep on each row the string its socket received in the last run, so it follows the row if rows move while paused.
+function storeLinkedTexts(node, textInputs) {
+    node._ultimateRows.forEach((row, index) => {
+        row.linkedText = textInputs?.[`text_${index + 1}`];
+    });
+}
+
+function linkedTexts(node) {
+    const textInputs = {};
+    node._ultimateRows.forEach((row, index) => {
+        if (row.linkedText !== undefined && node.inputs[inputSlot(node, index)]?.link != null) {
+            textInputs[`text_${index + 1}`] = row.linkedText;
+        }
+    });
+    return textInputs;
+}
+
+// action is "refresh" (rebuild the text from the node's current settings) or "validate" (also resume the workflow).
+async function sendText(node, action) {
+    const response = await api.fetchApi(`/ultimate_concatenator/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            node: node._ultimateExecutionId ?? String(node.id),
+            texts_json: node._ultimateTextsStorage.value,
+            delimiter: node._ultimateDelimiter.value,
+            replacements_json: node._ultimateReplacementsStorage.value,
+            text_inputs: linkedTexts(node),
+        }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(data.error ?? `${action} failed (${response.status})`);
+    }
+    setPreviewText(node, data.text);
 }
 
 async function readTextSets() {
@@ -884,6 +970,30 @@ function openTextSetBrowser(node, sets, saving) {
 
 app.registerExtension({
     name: "ultimate-concatenator.dynamic-texts",
+    setup() {
+        api.addEventListener("ultimate_concatenator.waiting", ({ detail }) => {
+            const node = nodeByExecutionId(detail.node);
+            if (!node) {
+                return;
+            }
+            node._ultimateExecutionId = detail.node;
+            storeLinkedTexts(node, detail.text_inputs);
+            setPreviewText(node, detail.text);
+            setPaused(node, true);
+            app.extensionManager.toast.add({
+                severity: "info",
+                summary: "Workflow paused",
+                detail: "Edit the text if needed, then click Validate on the Ultimate Text Concatenator node.",
+                life: 5000,
+            });
+        });
+        api.addEventListener("ultimate_concatenator.released", ({ detail }) => {
+            const node = nodeByExecutionId(detail.node);
+            if (node) {
+                setPaused(node, false);
+            }
+        });
+    },
     beforeRegisterNodeDef(nodeType, nodeData) {
         if (nodeData.name !== NODE_NAME) {
             return;
@@ -944,6 +1054,25 @@ app.registerExtension({
                         .catch(showError);
                 }),
             ];
+            this._ultimateWait = this.widgets.find(
+                (widget) => widget.name === "wait_for_validation",
+            );
+            this._ultimateWait.label = "Wait for validation";
+            const waitCallback = this._ultimateWait.callback;
+            this._ultimateWait.callback = (...args) => {
+                waitCallback?.apply(this._ultimateWait, args);
+                arrangeWidgets(this);
+                resizeNode(this);
+            };
+            this._ultimatePreviewToggle = this.addWidget("toggle", "Preview", false, (value) =>
+                setPreviewShown(this, value),
+            );
+            this._ultimatePreviewToggle.serialize = false;
+            this._ultimatePreviewToggle.options.serialize = false;
+            this._ultimateValidationButtons = [
+                addButton(this, "Refresh", () => sendText(this, "refresh").catch(showError)),
+                addButton(this, "Validate", () => sendText(this, "validate").catch(showError)),
+            ];
             buildTextRows(this, parseItems(this._ultimateTextsStorage.value));
             buildReplacementRows(this, parseReplacements(this._ultimateReplacementsStorage.value));
             return result;
@@ -955,24 +1084,36 @@ app.registerExtension({
             const values = info?.widgets_values;
 
             if (Array.isArray(values)) {
-                // The first release also stored every row and the Add Text button before the delimiter, which was always last.
-                const firstRelease = values.length > 3;
+                // The first release also stored every row and the Add Text button (null) before the delimiter, which was always last.
+                const firstRelease = values.length > 3 && values[values.length - 2] === null;
                 this._ultimateTextsStorage.value =
                     values[0] ?? JSON.stringify(DEFAULT_ITEMS);
                 this._ultimateDelimiter.value =
                     (firstRelease ? values[values.length - 1] : values[1]) ?? ", ";
                 this._ultimateReplacementsStorage.value =
                     (firstRelease ? null : values[2]) ?? DEFAULT_REPLACEMENTS;
+                this._ultimateWait.value = (firstRelease ? null : values[3]) ?? false;
             } else if (values && typeof values === "object") {
                 this._ultimateTextsStorage.value =
                     values.texts_json ?? JSON.stringify(DEFAULT_ITEMS);
                 this._ultimateDelimiter.value = values.delimiter ?? ", ";
                 this._ultimateReplacementsStorage.value =
                     values.replacements_json ?? DEFAULT_REPLACEMENTS;
+                this._ultimateWait.value = values.wait_for_validation ?? false;
             }
 
             buildTextRows(this, parseItems(this._ultimateTextsStorage.value));
             buildReplacementRows(this, parseReplacements(this._ultimateReplacementsStorage.value));
+            this._ultimatePreviewToggle.value = this.properties.ultimate_preview === true;
+            setPreviewShown(this, this._ultimatePreviewToggle.value);
+            return result;
+        };
+
+        const onExecuted = nodeType.prototype.onExecuted;
+        nodeType.prototype.onExecuted = function (message) {
+            const result = onExecuted?.apply(this, arguments);
+            storeLinkedTexts(this, message.text_inputs?.[0]);
+            setPreviewText(this, message.text?.[0] ?? "");
             return result;
         };
 

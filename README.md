@@ -57,6 +57,17 @@ Each rule has these buttons:
 
 When **Clean up removed words** is on (default), removed text also takes the spaces around it, keeping one space only when it still separates two words: removing `YOUTUBE` from `that reads YOUTUBE.` gives `that reads.`, and from `(blue eyes)` removing `blue` gives `(eyes)`. After a rule removed some text, the whole output is also tidied: repeated delimiters are merged (`red, , green` becomes `red, green`), a delimiter left at the start or end is removed, the period left behind by a removed sentence is dropped (`smiles. . The` becomes `smiles. The`), runs of spaces become one space, and leading and trailing spaces are trimmed.
 
+## Wait for validation and preview
+
+Turn on **Wait for validation** to pause the workflow on this node. Two buttons appear:
+
+- **Refresh:** rebuilds the text from the node's current rows, delimiter, and replacement rules, and shows it in the preview. Connected rows keep the string they received in the last run.
+- **Validate:** rebuilds the text the same way, sends it to the next node, and resumes the workflow.
+
+While paused, the **Validate** button reads *Validate (workflow paused)*. Edit rows or rules, click **Refresh** to check the result, then **Validate**. Cancelling the run in ComfyUI also stops the pause. With the switch on, the node pauses on every run, even when nothing changed.
+
+Turn on **Preview** to show the text sent to the next node. It is updated after every run, when the workflow pauses, and on each **Refresh**.
+
 ## Text sets
 
 Click **Save Text Set** to store all current rows (text, labels, order, and included/ignored state) and the replacement rules. Type a new name to create a set, or select an existing set in the list to replace it; the button then reads **Replace** and the preview shows the content that will be overwritten.

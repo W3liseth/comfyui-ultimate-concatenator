@@ -1,5 +1,11 @@
 import json
 import re
+import threading
+
+from aiohttp import web
+
+import comfy.model_management
+from server import PromptServer
 
 # "*" in a find text matches the shortest run of any text that stays within one sentence.
 WILDCARD = r"[^.!?\n]*?"
@@ -87,6 +93,61 @@ class TextInputs(dict):
         return ("STRING", {"forceInput": True})
 
 
+def build_text(texts_json, delimiter, replacements_json, text_inputs):
+    texts = json.loads(texts_json)
+    if not isinstance(texts, list):
+        raise ValueError("texts_json must contain a JSON list")
+
+    enabled_texts = []
+    for index, item in enumerate(texts):
+        if isinstance(item, dict):
+            if item.get("enabled", True):
+                text = text_inputs.get(f"text_{index + 1}", item.get("text", ""))
+                enabled_texts.append(str(text))
+        else:
+            enabled_texts.append(str(item))
+
+    if not enabled_texts:
+        return ""
+
+    result = enabled_texts[0]
+    previous = enabled_texts[0]
+    for text in enabled_texts[1:]:
+        previous_without_spaces = previous.rstrip(" ")
+        if previous_without_spaces.endswith("."):
+            separator = "" if previous_without_spaces != previous else " "
+        else:
+            separator = delimiter
+        result += separator + text
+        previous = text
+
+    return apply_replacements(result, json.loads(replacements_json), delimiter)
+
+
+# Executions paused by "Wait for validation", keyed by node execution id, until the validate route releases them.
+WAITING = {}
+
+
+def build_text_from_request(data):
+    return build_text(data["texts_json"], data["delimiter"], data["replacements_json"], data["text_inputs"])
+
+
+@PromptServer.instance.routes.post("/ultimate_concatenator/refresh")
+async def refresh_text(request):
+    return web.json_response({"text": build_text_from_request(await request.json())})
+
+
+@PromptServer.instance.routes.post("/ultimate_concatenator/validate")
+async def validate_text(request):
+    data = await request.json()
+    waiting = WAITING.get(data["node"])
+    if waiting is None:
+        return web.json_response({"error": "This node is not waiting for validation."}, status=409)
+    waiting["text"] = build_text_from_request(data)
+    waiting["released"].set()
+    return web.json_response({"text": waiting["text"]})
+
+
 class UltimateTextConcatenator:
     @classmethod
     def INPUT_TYPES(cls):
@@ -95,8 +156,10 @@ class UltimateTextConcatenator:
                 "texts_json": ("STRING", {"default": '[{"text":"","enabled":true}]', "hidden": True}),
                 "delimiter": ("STRING", {"default": ", "}),
                 "replacements_json": ("STRING", {"default": '{"clean_up":true,"rules":[]}', "hidden": True}),
+                "wait_for_validation": ("BOOLEAN", {"default": False}),
             },
             "optional": TextInputs(),
+            "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
     RETURN_TYPES = ("STRING",)
@@ -104,35 +167,29 @@ class UltimateTextConcatenator:
     FUNCTION = "concatenate"
     CATEGORY = "text"
 
-    def concatenate(self, texts_json, delimiter, replacements_json, **text_inputs):
-        texts = json.loads(texts_json)
-        if not isinstance(texts, list):
-            raise ValueError("texts_json must contain a JSON list")
+    @classmethod
+    def IS_CHANGED(cls, wait_for_validation, **kwargs):
+        # A node waiting for validation must pause on every run, even when its inputs did not change.
+        return float("nan") if wait_for_validation else ""
 
-        enabled_texts = []
-        for index, item in enumerate(texts):
-            if isinstance(item, dict):
-                if item.get("enabled", True):
-                    text = text_inputs.get(f"text_{index + 1}", item.get("text", ""))
-                    enabled_texts.append(str(text))
-            else:
-                enabled_texts.append(str(item))
+    def concatenate(self, texts_json, delimiter, replacements_json, wait_for_validation, unique_id, **text_inputs):
+        result = build_text(texts_json, delimiter, replacements_json, text_inputs)
+        if wait_for_validation:
+            waiting = {"released": threading.Event(), "text": result}
+            WAITING[unique_id] = waiting
+            PromptServer.instance.send_sync(
+                "ultimate_concatenator.waiting",
+                {"node": unique_id, "text": result, "text_inputs": text_inputs},
+            )
+            try:
+                while not waiting["released"].wait(0.1):
+                    comfy.model_management.throw_exception_if_processing_interrupted()
+            finally:
+                del WAITING[unique_id]
+                PromptServer.instance.send_sync("ultimate_concatenator.released", {"node": unique_id})
+            result = waiting["text"]
 
-        if not enabled_texts:
-            return ("",)
-
-        result = enabled_texts[0]
-        previous = enabled_texts[0]
-        for text in enabled_texts[1:]:
-            previous_without_spaces = previous.rstrip(" ")
-            if previous_without_spaces.endswith("."):
-                separator = "" if previous_without_spaces != previous else " "
-            else:
-                separator = delimiter
-            result += separator + text
-            previous = text
-
-        return (apply_replacements(result, json.loads(replacements_json), delimiter),)
+        return {"ui": {"text": [result], "text_inputs": [text_inputs]}, "result": (result,)}
 
 
 NODE_CLASS_MAPPINGS = {
