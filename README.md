@@ -41,7 +41,7 @@ Sockets are always listed in the same order as the rows. Moving or deleting a ro
 
 ## Replacements
 
-Replacement rules are listed under `delimiter`. Click **Add Replacement**, then fill in the text to find and the text to put instead. Rules are applied to the final concatenated text, from top to bottom, each one on the result of the previous one. Every occurrence is replaced; a rule whose text is not found does nothing. An empty replacement removes the text.
+Replacement rules are listed under `delimiter`. Click **Add Replacement**, then fill in the text to find and the text to put instead. Rules only change the strings received through connected sockets; text typed in the rows is never changed. Each connected string is processed on its own, before concatenation, so a find text cannot span two rows. Rules are applied from top to bottom, each one on the result of the previous one. Every occurrence is replaced; a rule whose text is not found does nothing. An empty replacement removes the text, and a connected string that becomes empty is left out of the output.
 
 Separate several texts with `|` to replace all of them with the same text. For example, `black, wavy hair | red hair | brown hair` → `blonde, straight hair` replaces each of the three. Commas are part of the text to find. Spaces around `|` are ignored, and a longer text is matched before a shorter one it contains.
 
@@ -55,7 +55,7 @@ Each rule has these buttons:
 - **Eye:** ignores or applies the rule again without deleting it.
 - **Trash:** deletes the rule.
 
-When **Clean up removed words** is on (default), removed text also takes the spaces around it, keeping one space only when it still separates two words: removing `YOUTUBE` from `that reads YOUTUBE.` gives `that reads.`, and from `(blue eyes)` removing `blue` gives `(eyes)`. After a rule removed some text, the whole output is also tidied: repeated delimiters are merged (`red, , green` becomes `red, green`), a delimiter left at the start or end is removed, the period left behind by a removed sentence is dropped (`smiles. . The` becomes `smiles. The`), runs of spaces become one space, and leading and trailing spaces are trimmed.
+When **Clean up removed words** is on (default), removed text also takes the spaces around it, keeping one space only when it still separates two words: removing `YOUTUBE` from `that reads YOUTUBE.` gives `that reads.`, and from `(blue eyes)` removing `blue` gives `(eyes)`. After a rule removed some text, the connected string is also tidied: repeated delimiters are merged (`red, , green` becomes `red, green`), a delimiter left at the start or end is removed, the period left behind by a removed sentence is dropped (`smiles. . The` becomes `smiles. The`), runs of spaces become one space, and leading and trailing spaces are trimmed.
 
 ## Wait for validation and preview
 

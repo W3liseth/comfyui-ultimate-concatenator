@@ -98,12 +98,20 @@ def build_text(texts_json, delimiter, replacements_json, text_inputs):
     if not isinstance(texts, list):
         raise ValueError("texts_json must contain a JSON list")
 
+    replacements = json.loads(replacements_json)
     enabled_texts = []
     for index, item in enumerate(texts):
         if isinstance(item, dict):
-            if item.get("enabled", True):
-                text = text_inputs.get(f"text_{index + 1}", item.get("text", ""))
-                enabled_texts.append(str(text))
+            if not item.get("enabled", True):
+                continue
+            key = f"text_{index + 1}"
+            if key in text_inputs:
+                # Replacement rules only change strings received through a socket; a string they empty is left out.
+                text = apply_replacements(str(text_inputs[key]), replacements, delimiter)
+                if text:
+                    enabled_texts.append(text)
+            else:
+                enabled_texts.append(str(item.get("text", "")))
         else:
             enabled_texts.append(str(item))
 
@@ -121,7 +129,7 @@ def build_text(texts_json, delimiter, replacements_json, text_inputs):
         result += separator + text
         previous = text
 
-    return apply_replacements(result, json.loads(replacements_json), delimiter)
+    return result
 
 
 # Executions paused by "Wait for validation", keyed by node execution id, until the validate route releases them.
