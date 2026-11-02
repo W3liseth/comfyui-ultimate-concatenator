@@ -575,6 +575,31 @@ function setPreviewText(node, text) {
     node._ultimatePreviewText = text;
     if (node._ultimatePreview) {
         node._ultimatePreview.element.value = text;
+        fitPreview(node);
+    }
+}
+
+// Grow the preview to show the whole text plus two empty lines, so it never needs a scrollbar.
+function fitPreview(node) {
+    const textarea = node._ultimatePreview?.element;
+    if (!textarea?.isConnected) {
+        return;
+    }
+    const style = getComputedStyle(textarea);
+    // Measuring before the canvas lays the widget out would wrap every character on its own line.
+    if (textarea.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) <= 0) {
+        return;
+    }
+    const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2;
+    textarea.style.height = "auto";
+    textarea.style.minHeight = "0";
+    const height = Math.ceil(textarea.scrollHeight + lineHeight * 2);
+    // Vue nodes stretch widgets with flex, which ignores height, so the minimum height carries the size there.
+    textarea.style.height = `${height}px`;
+    textarea.style.minHeight = `${height}px`;
+    if (height !== node._ultimatePreviewHeight) {
+        node._ultimatePreviewHeight = height;
+        resizeNode(node);
     }
 }
 
@@ -586,13 +611,31 @@ function setPreviewShown(node, shown) {
         textarea.value = node._ultimatePreviewText ?? "";
         textarea.placeholder = "The text sent to the next node appears here after a run or a Refresh.";
         styleField(textarea);
-        Object.assign(textarea.style, { width: "100%", minHeight: "80px", padding: "6px", resize: "vertical" });
+        Object.assign(textarea.style, {
+            width: "100%",
+            minHeight: "80px",
+            flex: "none",
+            padding: "6px",
+            resize: "none",
+            overflow: "hidden",
+        });
         node._ultimatePreview = node.addDOMWidget("ultimate_preview", "ultimate-preview", textarea, {
             serialize: false,
-            getMinHeight: () => 90,
+            getMinHeight: () => (node._ultimatePreviewHeight ?? 80) + 10,
+            getMaxHeight: () => (node._ultimatePreviewHeight ?? 80) + 10,
         });
         node._ultimatePreview.serialize = false;
+        // Text wraps differently when the width changes, including when the canvas first lays the widget out.
+        let width = 0;
+        node._ultimatePreviewObserver = new ResizeObserver(([entry]) => {
+            if (entry.contentRect.width !== width) {
+                width = entry.contentRect.width;
+                fitPreview(node);
+            }
+        });
+        node._ultimatePreviewObserver.observe(textarea);
     } else if (!shown && node._ultimatePreview) {
+        node._ultimatePreviewObserver.disconnect();
         node.removeWidget(node._ultimatePreview);
         node._ultimatePreview = null;
     }
