@@ -451,7 +451,7 @@ function addReplacementRow(node, rule) {
     const find = document.createElement("input");
     const replace = document.createElement("input");
     for (const [field, placeholder, title] of [
-        [find, "Find (a | b)", "Text to find. Separate several texts with | to replace them all."],
+        [find, "Find (a | b, * = any)", "Text to find. Use * for any text within the same sentence, and | to separate several texts to replace."],
         [replace, "Replace with", "Replacement text (leave empty to remove the found text)"],
     ]) {
         field.type = "text";

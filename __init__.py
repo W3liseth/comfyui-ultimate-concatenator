@@ -1,25 +1,62 @@
 import json
 import re
 
+# "*" in a find text matches the shortest run of any text that stays within one sentence.
+WILDCARD = r"[^.!?\n]*?"
+
+
+def find_pattern(term):
+    """A space next to "*" only requires the neighbouring text to be a whole word; the wildcard covers the gap."""
+    parts = term.split("*")
+    pattern = ""
+    for index, part in enumerate(parts):
+        if index > 0:
+            pattern += WILDCARD + (r"(?<!\w)" if part[:1].isspace() else "")
+        pattern += re.escape(part.strip())
+        if index < len(parts) - 1 and part[-1:].isspace():
+            pattern += r"(?!\w)"
+    return pattern
+
 
 def apply_replacements(text, replacements, delimiter):
     removed = False
     for rule in replacements.get("rules", []):
         # Several texts can be searched at once by separating them with "|"; longer ones are tried first.
-        terms = sorted({term.strip() for term in rule.get("find", "").split("|")} - {""}, key=len, reverse=True)
+        terms = {term.strip() for term in rule.get("find", "").split("|")}
+        # A text made only of wildcards would match the empty string everywhere.
+        terms = sorted((term for term in terms if term.replace("*", "").strip()), key=len, reverse=True)
         if not terms or not rule.get("enabled", True):
             continue
-        pattern = "|".join(re.escape(term) for term in terms)
+        pattern = "|".join(find_pattern(term) for term in terms)
         if rule.get("whole_word", True):
             pattern = rf"(?<!\w)(?:{pattern})(?!\w)"
         replace = rule.get("replace", "")
         flags = 0 if rule.get("match_case", False) else re.IGNORECASE
-        text, count = re.subn(pattern, lambda match: replace, text, flags=flags)
+        if replace or not replacements.get("clean_up", True):
+            text, count = re.subn(pattern, lambda match: replace, text, flags=flags)
+        else:
+            text, count = remove_matches(text, pattern, flags)
         removed = removed or (count > 0 and not replace)
 
     if removed and replacements.get("clean_up", True):
         text = clean_up(text, delimiter)
     return text
+
+
+def remove_matches(text, pattern, flags):
+    """Remove each match with the spaces around it, keeping one space only when it still separates two words."""
+
+    def gap(match):
+        left = text[match.start() - 1] if match.start() else "\n"
+        right = text[match.end()] if match.end() < len(text) else "\n"
+        if not (match.group(1) or match.group(2)) or left in "\n([{" or right in "\n)]},;:":
+            return ""
+        if right in ".!?":
+            # Between two sentences, keep "smiles. ." so clean_up drops the period of the removed sentence.
+            return " " if left in ".!?" else ""
+        return " "
+
+    return re.subn(rf"([ \t]*)(?:{pattern})([ \t]*)", gap, text, flags=flags)
 
 
 def clean_up(text, delimiter):
@@ -31,6 +68,12 @@ def clean_up(text, delimiter):
         text = re.sub(rf"^\s*{mark}\s*|\s*{mark}\s*$", "", text)
         if not delimiter[0].isspace():
             text = re.sub(rf"[ \t]+{mark}", lambda match: separator, text)
+        if separator not in ".!?":
+            # Rows after a sentence get no delimiter, so a delimiter right after one comes from a removed row.
+            text = re.sub(rf"([.!?])[ \t]*{mark}[ \t]*", r"\1 ", text)
+    # A removed sentence leaves its final punctuation behind: "smiles. ." becomes "smiles.". "..." is kept.
+    text = re.sub(r"([.!?])(?:\s+[.!?](?!\S))+", r"\1", text)
+    text = re.sub(r"^\s*[.!?](?:\s+|$)", "", text)
     return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 

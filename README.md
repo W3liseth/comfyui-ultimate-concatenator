@@ -45,6 +45,8 @@ Replacement rules are listed under `delimiter`. Click **Add Replacement**, then 
 
 Separate several texts with `|` to replace all of them with the same text. For example, `black, wavy hair | red hair | brown hair` → `blonde, straight hair` replaces each of the three. Commas are part of the text to find. Spaces around `|` are ignored, and a longer text is matched before a shorter one it contains.
 
+Use `*` to match any text. For example, `The * YOUTUBE` matches `The image has a watermark in the bottom right corner that reads YOUTUBE`. A `*` matches as little text as possible and never goes past the end of a sentence (`.`, `!`, `?` or a line break), so it cannot swallow a previous or following sentence. It can cross commas inside a sentence, so `black * hair` matches `black, wavy hair`. A space next to `*` only means the neighbouring text must be a whole word: `The * YOUTUBE` does not match `Theory ... YOUTUBE`, while `red*` matches `reddish`. A `*` is always a wildcard; a find text cannot contain a literal `*`.
+
 Each rule has these buttons:
 
 - **Aa:** match case. Off by default, so `Red` and `red` are both replaced.
@@ -53,7 +55,7 @@ Each rule has these buttons:
 - **Eye:** ignores or applies the rule again without deleting it.
 - **Trash:** deletes the rule.
 
-When **Clean up removed words** is on (default) and a rule removed some text, the whole output is tidied: repeated delimiters are merged (`red, , green` becomes `red, green`), a delimiter left at the start or end is removed, runs of spaces become one space, and leading and trailing spaces are trimmed.
+When **Clean up removed words** is on (default), removed text also takes the spaces around it, keeping one space only when it still separates two words: removing `YOUTUBE` from `that reads YOUTUBE.` gives `that reads.`, and from `(blue eyes)` removing `blue` gives `(eyes)`. After a rule removed some text, the whole output is also tidied: repeated delimiters are merged (`red, , green` becomes `red, green`), a delimiter left at the start or end is removed, the period left behind by a removed sentence is dropped (`smiles. . The` becomes `smiles. The`), runs of spaces become one space, and leading and trailing spaces are trimmed.
 
 ## Text sets
 
