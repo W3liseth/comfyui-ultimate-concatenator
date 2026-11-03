@@ -64,7 +64,7 @@ Turn on **Wait for validation** to pause the workflow on this node. Two buttons 
 - **Refresh:** rebuilds the text from the node's current rows, delimiter, and replacement rules, and shows it in the preview. Connected rows keep the string they received in the last run.
 - **Validate:** rebuilds the text the same way, sends it to the next node, and resumes the workflow.
 
-While paused, the **Validate** button reads *Validate (workflow paused)*. Edit rows or rules, click **Refresh** to check the result, then **Validate**. Cancelling the run in ComfyUI also stops the pause. With the switch on, the node pauses on every run, even when nothing changed.
+When the workflow pauses, a short chime plays and a message appears. While paused, the **Validate** button reads *Validate (workflow paused)*. Edit rows or rules, click **Refresh** to check the result, then **Validate**. Cancelling the run in ComfyUI also stops the pause. With the switch on, the node pauses on every run, even when nothing changed.
 
 Turn on **Preview** to show the text sent to the next node. It is updated after every run, when the workflow pauses, and on each **Refresh**. Its height follows the text, so the whole text is visible with two empty lines below it and no scrollbar; it adjusts again when the node is resized.
 

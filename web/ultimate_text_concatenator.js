@@ -643,6 +643,24 @@ function setPreviewShown(node, shown) {
     resizeNode(node);
 }
 
+// A short two-note chime generated with Web Audio, so no sound file is needed.
+function playWaitingSound() {
+    const context = new AudioContext();
+    [880, 1320].forEach((frequency, index) => {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        const start = context.currentTime + index * 0.18;
+        oscillator.frequency.value = frequency;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.2, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.3);
+        oscillator.connect(gain).connect(context.destination);
+        oscillator.start(start);
+        oscillator.stop(start + 0.3);
+    });
+    setTimeout(() => context.close(), 1000);
+}
+
 function setPaused(node, paused) {
     node._ultimateValidationButtons[1].label = paused ? "Validate (workflow paused)" : "Validate";
     app.graph.setDirtyCanvas(true, false);
@@ -1023,6 +1041,7 @@ app.registerExtension({
             storeLinkedTexts(node, detail.text_inputs);
             setPreviewText(node, detail.text);
             setPaused(node, true);
+            playWaitingSound();
             app.extensionManager.toast.add({
                 severity: "info",
                 summary: "Workflow paused",
