@@ -130,6 +130,37 @@ function syncInputs(node, links) {
     updateLinkedRows(node);
 }
 
+// The frontend still adds sockets to the storage widgets and the delimiter, and a link dropped on the node lands in
+// the first one: plugged into texts_json, it fed plain text instead of JSON. Remove them, and in older workflows move
+// a link found on the storage to the first free text row. A delimiter that is already connected keeps its socket.
+function removeWidgetSockets(node) {
+    for (let slot = node.inputs.length - 1; slot >= 0; slot--) {
+        const input = node.inputs[slot];
+        const storage = input.name === "texts_json" || input.name === "replacements_json";
+        if (!storage && !(input.name === "delimiter" && input.link == null)) {
+            continue;
+        }
+        const link = storage && input.link != null && node.graph ? node.getInputLink(slot) : null;
+        node.removeInput(slot);
+        if (!link) {
+            continue;
+        }
+        const row = node._ultimateRows.findIndex((row, index) => node.inputs[inputSlot(node, index)].link == null);
+        if (row !== -1) {
+            node.graph.getNodeById(link.origin_id).connect(link.origin_slot, node, inputSlot(node, row));
+        }
+        app.extensionManager.toast.add({
+            severity: "warn",
+            summary: "Ultimate Text Concatenator",
+            detail:
+                row === -1
+                    ? `Node #${node.id}: a link was plugged into the hidden text storage and has been removed. Reconnect it to a text row.`
+                    : `Node #${node.id}: a link was plugged into the hidden text storage. It now goes to "${node._ultimateRows[row].label.value}". Check it, then save the workflow.`,
+            life: 10000,
+        });
+    }
+}
+
 function updateLinkedRows(node) {
     node._ultimateRows.forEach((row, index) => {
         const linked = node.inputs[inputSlot(node, index)]?.link != null;
@@ -1137,6 +1168,7 @@ app.registerExtension({
             ];
             buildTextRows(this, parseItems(this._ultimateTextsStorage.value));
             buildReplacementRows(this, parseReplacements(this._ultimateReplacementsStorage.value));
+            removeWidgetSockets(this);
             return result;
         };
 
@@ -1168,6 +1200,8 @@ app.registerExtension({
             buildReplacementRows(this, parseReplacements(this._ultimateReplacementsStorage.value));
             this._ultimatePreviewToggle.value = this.properties.ultimate_preview === true;
             setPreviewShown(this, this._ultimatePreviewToggle.value);
+            // Other nodes of the graph may not be configured yet, so links are moved after loading finishes.
+            setTimeout(() => removeWidgetSockets(this));
             return result;
         };
 

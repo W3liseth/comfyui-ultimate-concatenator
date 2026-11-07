@@ -161,9 +161,10 @@ class UltimateTextConcatenator:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "texts_json": ("STRING", {"default": '[{"text":"","enabled":true}]', "hidden": True}),
-                "delimiter": ("STRING", {"default": ", "}),
-                "replacements_json": ("STRING", {"default": '{"clean_up":true,"rules":[]}', "hidden": True}),
+                # No sockets on these widgets: a link dropped on the node would otherwise land in the first one.
+                "texts_json": ("STRING", {"default": '[{"text":"","enabled":true}]', "hidden": True, "socketless": True}),
+                "delimiter": ("STRING", {"default": ", ", "socketless": True}),
+                "replacements_json": ("STRING", {"default": '{"clean_up":true,"rules":[]}', "hidden": True, "socketless": True}),
                 "wait_for_validation": ("BOOLEAN", {"default": False}),
             },
             "optional": TextInputs(),
